@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TrackField</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+
+        :root {
+            --background-color: #4e81ef; /* 변경된 배경색 */
+            --map-background-color: #5da34e; /* 변경된 지도 배경색 */
+            --primary-color: #ff7755; /* 파스텔 빨강 */
+            --accent-color: #00b4d8; /* 파스텔 파랑 */
+            --text-color: #424242; /* 회색 */
+            --tracker-size: 5; /* 트랙커 크기의 초기값 설정 (퍼센트) */
+            --button-size: 40px; /* 버튼 크기 */
+            --live-button-color: #fac000; /* Live 버튼 색상 */
+        }
+
+        #container {
+            display: flex;
+            justify-content: space-between;
+            margin: 0 auto;
+            max-width: 1000px;
+        }
+
+        .map-container {
+            width: calc(50% - 5px);
+            height: 600px;
+            background-color: var(--map-background-color);
+            border-radius: 15px; /* 모서리 둥글게 처리 */
+            transition: all 0.3s ease-in-out;
+            position: relative;
+        }
+
+        .live-button, .track-field-button {
+            background-color: var(--live-button-color);
+            width: var(--button-size);
+            height: var(--button-size);
+            border-radius: 50%;
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .live-button img, .track-field-button img {
+            width: 50%;
+            height: 50%;
+        }
+
+        #gpxDisplay {
+            display: none;
+        }
+
+        #timeInput {
+            margin-top: 10px;
+        }
+
+        .tracker-marker {
+            background-image: url('https://em-content.zobj.net/source/microsoft/379/grinning-face-with-smiling-eyes_1f604.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            border-radius: 10%;
+            height: calc(var(--tracker-size, 300%) * var(--photo-size, 500%));
+            width: calc(var(--tracker-size, 300%) * var(--photo-size, 500%));
+        }
+
+        body {
+            background-color: var(--background-color);
+            color: var(--text-color);
+            font-family: 'The Jamsil', sans-serif;
+        }
+
+        h1 {
+            color: var(--primary-color);
+            font-weight: bold;
+        }
+
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            cursor: pointer;
+            margin-top: 10px;
+            font-family: 'The Jamsil', sans-serif;
+            font-weight: bold;
+            border-radius: 5px; /* 버튼 모서리 둥글게 처리 */
+        }
+
+        label {
+            color: var(--text-color);
+            margin-right: 8px;
+            font-family: 'The Jamsil', sans-serif;
+            font-weight: bold;
+        }
+
+        input {
+            color: var(--text-color);
+            background-color: white;
+            padding: 5px;
+            border: 1px solid var(--text-color);
+            border-radius: 4px;
+            font-family: 'The Jamsil', sans-serif;
+            font-weight: bold;
+        }
+    </style>
+
+    <style>
+        @import url('https://webfontworld.github.io/TheJamsil/TheJamsil.css');
+    </style>
+</head>
+<body>
+
+<h1>TrackField</h1>
+
+<div id="container">
+    <!-- 좌측 지도 -->
+    <div class="map-container" id="map1"></div>
+
+    <!-- 우측 지도 -->
+    <div class="map-container" id="map2"></div>
+
+    <!-- TrackField 버튼 -->
+    <div class="track-field-button" onclick="animateTrackField()">
+        <img src="https://em-content.zobj.net/source/microsoft/379/grinning-face-with-smiling-eyes_1f604.png" alt="TrackField Button">
+        <span>TrackField</span>
+    </div>
+</div>
+
+<!-- GPX 파일 선택 -->
+<input type="file" id="fileInput" accept=".gpx">
+<button onclick="viewGPX()">View GPX</button>
+
+<!-- 시간 입력 -->
+<label for="timeInput">Duration (Mins): </label>
+<input type="number" id="timeInput" min="1" step="1" value="3">
+
+<!-- Live 버튼 -->
+<div class="live-button" onclick="toggleLiveMode()">
+    <img src="https://i.namu.wiki/i/aH8beUCgU8LvxuSpXeDc58VP6UlUAXKdoSR6vv8J5YkCSag4-S1kuOR-jASvtopLR5r4fCZ6ikmeTUxSeoFQRQ.svg" alt="Live Button">
+</div>
+
+<!-- GPX 데이터 표시 -->
+<div id="gpxDisplay"></div>
+
+<!-- Leaflet JS 추가 -->
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<!-- 스크립트 -->
+<script>
+var map1, map2, liveMode = false;
+
+function viewGPX() {
+    var fileInput = document.getElementById('fileInput');
+    var selectedFile = fileInput.files[0];
+
+    if (selectedFile) {
+        var reader = new FileReader();
+        reader.onload = function (event) {
+            var gpxData = event.target.result;
+            var gpxDisplay = document.getElementById('gpxDisplay');
+            gpxDisplay.textContent = gpxData;
+            displayCoordinatesOnMap(gpxData);
+        };
+
+        reader.readAsText(selectedFile);
+    } else {
+        console.error('No file selected.');
+    }
+}
+
+function displayCoordinatesOnMap(gpxData) {
+    // 좌측 지도 초기화
+    map1 = L.map('map1', {
+        zoomControl: false,
+        attributionControl: false
+    }).setView([0, 0], 2);
+
+    var gpxLayer1 = new L.GPX(gpxData, {
+        async: true,
+        polyline_options: {
+            color: 'red',
+            weight: 5
+        },
+        marker_options: {
+            startIconUrl: null,
+            endIconUrl: null,
+            shadowUrl: null
+        }
+    });
+
+    gpxLayer1.on('loaded', function (e) {
+        map1.fitBounds(e.target.getBounds().pad(0.1));
+    }).addTo(map1);
+
+    gpxLayer1.on('addline', function(e) {
+        console.log('GPX file loaded successfully:', e);
+    });
+
+    // 우측 지도 초기화
+    map2 = L.map('map2', {
+        zoomControl: false,
+        attributionControl: false
+    }).setView([0, 0], 2);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map2);
+
+    var gpxLayer2 = new L.GPX(gpxData, {
+        async: true,
+        polyline_options: {
+            color: 'red',
+            weight: 5
+        },
+        marker_options: {
+            startIconUrl: null,
+            endIconUrl: null,
+            shadowUrl: null
+        }
+    });
+
+    gpxLayer2.on('loaded', function (e) {
+        map2.fitBounds(e.target.getBounds().pad(0.1));
+    }).addTo(map2);
+
+    gpxLayer2.on('addline', function(e) {
+        console.log('GPX file loaded successfully:', e);
+    });
+}
+
+function animateTrackField() {
+    var timeInput = document.getElementById('timeInput');
+    var duration = parseInt(timeInput.value);
+
+    if (isNaN(duration) || duration <= 0) {
+        alert('Invalid duration. Please enter a positive number.');
+        return;
+    }
+
+    // 좌측 지도의 트래커 초기화
+    if (map1) {
+        var waypoints1 = map1._layers[Object.keys(map1._layers)[1]]._latlngs;
+        var trackerMarker1 = L.marker(waypoints1[0], { icon: L.divIcon({ className: 'tracker-marker' }) }).addTo(map1);
+        var startTime1 = new Date().getTime();
+        var animationInterval1 = 1000;
+
+        function animateMarker1() {
+            var currentTime1 = new Date().getTime();
+            var elapsedTime1 = (currentTime1 - startTime1) / 1000;
+
+            if (elapsedTime1 <= duration * 60) {
+                var progress1 = elapsedTime1 / (duration * 60);
+                var index1 = Math.floor(progress1 * waypoints1.length);
+
+                if (index1 < waypoints1.length) {
+                    trackerMarker1.setLatLng(waypoints1[index1]);
+                    trackerMarker1.update();
+                    setTimeout(animateMarker1, animationInterval1);
+                }
+            }
+        }
+
+        animateMarker1();
+    } else {
+        alert('No GPX data loaded. Please load a GPX file first.');
+    }
+
+    // 우측 지도의 트래커 초기화
+    if (map2) {
+        var waypoints2 = map2._layers[Object.keys(map2._layers)[1]]._latlngs;
+        var trackerMarker2 = L.marker(waypoints2[0], { icon: L.divIcon({ className: 'tracker-marker' }) }).addTo(map2);
+        var startTime2 = new Date().getTime();
+        var animationInterval2 = 1000;
+
+        function animateMarker2() {
+            var currentTime2 = new Date().getTime();
+            var elapsedTime2 = (currentTime2 - startTime2) / 1000;
+
+            if (elapsedTime2 <= duration * 60) {
+                var progress2 = elapsedTime2 / (duration * 60);
+                var index2 = Math.floor(progress2 * waypoints2.length);
+
+                if (index2 < waypoints2.length) {
+                    trackerMarker2.setLatLng(waypoints2[index2]);
+                    trackerMarker2.update();
+                    if (liveMode) {
+                        map2.panTo(trackerMarker2.getLatLng());
+                    }
+                    setTimeout(animateMarker2, animationInterval2);
+                }
+            }
+        }
+
+        animateMarker2();
+    } else {
+        alert('No GPX data loaded. Please load a GPX file first.');
+    }
+}
+
+function toggleLiveMode() {
+    liveMode = !liveMode;
+    var liveButton = document.querySelector('.live-button');
+    liveButton.style.backgroundColor = liveMode ? 'red' : 'var(--live-button-color)';
+}
+</script>
+
+<!-- Leaflet GPX 플러그인 추가 -->
+<script src="https://unpkg.com/leaflet-gpx/gpx.js"></script>
+
+</body>
+</html>
